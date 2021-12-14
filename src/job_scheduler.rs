@@ -1,8 +1,10 @@
 use crate::job::{JobLocked, JobType};
 use chrono::Utc;
-use std::sync::{Arc, RwLock};
+use tokio::sync::RwLock;
+use std::sync::Arc;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
+use futures::future::join_all;
 
 /// The JobScheduler contains and executes the scheduled jobs.
 pub struct JobsSchedulerLocked(Arc<RwLock<JobScheduler>>);
@@ -26,6 +28,22 @@ impl Default for JobsSchedulerLocked {
     }
 }
 
+async fn enumerate_removal(to_be_removed: &Uuid, 
+                           job: &mut JobLocked, 
+                           remove: &mut Vec<JobLocked>,
+                           retained: &mut Vec<JobLocked>)
+{
+    let f_lock = job.0.read().await;
+    if f_lock.job_id().eq(to_be_removed)
+    {
+        remove.push(job.clone());
+    }
+    else
+    {
+        retained.push(job.clone());
+    }
+}
+
 impl JobsSchedulerLocked {
 
     /// Create a new `JobSchedulerLocked`.
@@ -45,9 +63,9 @@ impl JobsSchedulerLocked {
     ///     println!("I get executed every 10 seconds!");
     /// }));
     /// ```
-    pub fn add(&mut self, job: JobLocked) -> Result<(), Box<dyn std::error::Error + '_>> {
+pub async fn add(&mut self, job: JobLocked) -> Result<(), Box<dyn std::error::Error + '_>> {
         {
-            let mut self_w = self.0.write()?;
+            let mut self_w = self.0.write().await;
             self_w.jobs.push(job);
         }
         Ok(())
@@ -63,30 +81,25 @@ impl JobsSchedulerLocked {
     /// }));
     /// sched.remove(job_id);
     /// ```
-    pub fn remove(&mut self, to_be_removed: &Uuid) -> Result<(), Box<dyn std::error::Error + '_>> {
+pub async fn remove(&mut self, to_be_removed: &Uuid) -> Result<(), Box<dyn std::error::Error + '_>> {
         {
-            let mut ws = self.0.write()?;
+            let mut ws = self.0.write().await;
             let mut removed: Vec<JobLocked> = vec![];
-            ws.jobs.retain(|f| !{
-                let not_to_be_removed = if let Ok(f) = f.0.read() {
-                    f.job_id().eq(to_be_removed)
-                } else {
-                    false
-                };
-                if !not_to_be_removed {
-                    let f = f.0.clone();
-                    removed.push(JobLocked(f))
-                }
-                not_to_be_removed
-            });
+            let mut retained: Vec<JobLocked> = vec![];
+            for job in ws.jobs.iter_mut()
+            {
+                enumerate_removal(to_be_removed, job, &mut removed, &mut retained).await;
+            }
+
             for job in removed {
-                let mut job_r = job.0.write().unwrap();
+                let mut job_r = job.0.write().await;
                 job_r.set_stopped();
                 let job_type = job_r.job_type();
                 if matches!(job_type, JobType::OneShot) || matches!(job_type, JobType::Repeated) {
                     job_r.abort_join_handle();
                 }
             }
+            ws.jobs = retained;
         }
         Ok(())
     }
@@ -103,29 +116,27 @@ impl JobsSchedulerLocked {
     ///     std::thread::sleep(Duration::from_millis(500));
     /// }
     /// ```
-    pub fn tick(&mut self) -> Result<(), Box<dyn std::error::Error + '_>> {
+pub async fn tick(&mut self) -> Result<(), Box<dyn std::error::Error + '_>> {
         let l = self.clone();
         {
-            let mut ws = self.0.write()?;
+            let mut ws = self.0.write().await;
             for jl in ws.jobs.iter_mut() {
-                if jl.tick() {
+                if jl.tick().await {
                     let ref_for_later = jl.0.clone();
                     let jobs = l.clone();
                     tokio::spawn(async move {
-                        let e = ref_for_later.write();
-                        if let Ok(mut w) = e {
-                            let jt = w.job_type();
-                            if matches!(jt, JobType::OneShot) {
-                                let mut jobs = jobs.clone();
-                                let job_id = w.job_id();
-                                tokio::spawn(async move {
-                                    if let Err(e) = jobs.remove(&job_id) {
-                                        eprintln!("Error removing job {:}", e);
-                                    }
-                                });
-                            }
-                            w.run(jobs);
+                        let mut w = ref_for_later.write().await;
+                        let jt = w.job_type();
+                        if matches!(jt, JobType::OneShot) {
+                            let mut jobs = jobs.clone();
+                            let job_id = w.job_id();
+                            tokio::spawn(async move {
+                                if let Err(e) = jobs.remove(&job_id).await {
+                                    eprintln!("Error removing job {:}", e);
+                                }
+                            });
                         }
+                        w.run(jobs);
                     });
                 }
             }
@@ -150,7 +161,7 @@ impl JobsSchedulerLocked {
             loop {
                 tokio::time::sleep(core::time::Duration::from_millis(500)).await;
                 let mut jsl = jl.clone();
-                let tick = jsl.tick();
+                let tick = jsl.tick().await;
                 if let Err(e) = tick {
                     eprintln!("Error on job scheduler tick {:?}", e);
                     break;
@@ -170,10 +181,10 @@ impl JobsSchedulerLocked {
     ///     std::thread::sleep(sched.time_till_next_job());
     /// }
     /// ```
-    pub fn time_till_next_job(
+    pub async fn time_till_next_job(
         &self,
     ) -> Result<std::time::Duration, Box<dyn std::error::Error + '_>> {
-        let r = self.0.read()?;
+        let r = self.0.read().await;
         if r.jobs.is_empty() {
             // Take a guess if there are no jobs.
             return Ok(std::time::Duration::from_millis(500));
@@ -182,22 +193,15 @@ impl JobsSchedulerLocked {
         let min = r
             .jobs
             .iter()
-            .map(|j| {
-                let diff = {
-                    j.0.read().ok().and_then(|j| {
-                        j.schedule()
-                            .and_then(|s| s.upcoming(Utc)
-                                .take(1)
-                                .find(|_| true)
-                                .map(|next| next - now))
-
-                    })
-                };
-                diff
-            })
-            .flatten()
-            .min();
-
+            .map(|j| async {
+                let j_unlocked = j.0.read().await;
+                j_unlocked.schedule()
+                          .and_then(|s| s.upcoming(Utc).take(1).last().map(|next| next - now))
+            });
+        let min = join_all(min).await;
+        let min = min.into_iter().flatten().min();
+        
+                
         let m = min
             .unwrap_or_else(chrono::Duration::zero)
             .to_std()
