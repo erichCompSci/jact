@@ -63,7 +63,7 @@ impl JobsSchedulerLocked {
     ///     println!("I get executed every 10 seconds!");
     /// }));
     /// ```
-pub async fn add(&mut self, job: JobLocked) -> Result<(), Box<dyn std::error::Error + '_>> {
+    pub async fn add(&mut self, job: JobLocked) -> Result<(), Box<dyn std::error::Error + '_>> {
         {
             let mut self_w = self.0.write().await;
             self_w.jobs.push(job);
@@ -81,7 +81,7 @@ pub async fn add(&mut self, job: JobLocked) -> Result<(), Box<dyn std::error::Er
     /// }));
     /// sched.remove(job_id);
     /// ```
-pub async fn remove(&mut self, to_be_removed: &Uuid) -> Result<(), Box<dyn std::error::Error + '_>> {
+    pub async fn remove(&mut self, to_be_removed: &Uuid) -> Result<(), Box<dyn std::error::Error + '_>> {
         {
             let mut ws = self.0.write().await;
             let mut removed: Vec<JobLocked> = vec![];

@@ -333,7 +333,7 @@ impl JobLocked {
 //        JobLocked::new_async(schedule, run)
 //    }
 
-async fn make_one_shot_job(duration: Duration, run_async: Box<JobToRunAsync>) -> Result<Self, Box<dyn std::error::Error>> {
+    async fn make_one_shot_job(duration: Duration, run_async: Box<JobToRunAsync>) -> Result<Self, Box<dyn std::error::Error>> {
         let job = NonCronJob {
             run_async,
             last_tick: None,
@@ -402,7 +402,7 @@ async fn make_one_shot_job(duration: Duration, run_async: Box<JobToRunAsync>) ->
     /// sched.add(job)
     /// tokio::spawn(sched.start());
     /// ```
-pub async fn new_one_shot<T>(duration: Duration, run: T) -> Result<Self, Box<dyn std::error::Error>>
+    pub async fn new_one_shot<T>(duration: Duration, run: T) -> Result<Self, Box<dyn std::error::Error>>
         where
             T: 'static,
             T: FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = ()> + Send + Sync>> + Send + Sync,
