@@ -1,18 +1,18 @@
 [package]
-name = "tokio-cron-scheduler2"
+name = "jact"
 version = "0.1.0"
-authors = ["Michael van Niekerk <mike@agri-io.co.za>", "Erich Lohrmann <erichlohrmann@gmail.com>"]
+authors = ["Erich Lohrmann <erichlohrmann@gmail.com>", "Michael van Niekerk <mike@agri-io.co.za>"]
 edition = "2021"
 
-documentation = "https://docs.rs/tokio_cron_scheduler/"
-repository = "https://github.com/erichCompSci/tokio-cron-scheduler"
+repository = "https://github.com/erichCompSci/jact"
 
 description = "Schedule tasks on tokio using cron-like annotation. Also schedule tasks at an instant or repeat them at a fixed duration."
 
 license = "MIT/Apache-2.0"
 
 readme = "README.md"
-keywords = ["cron", "crontab", "scheduler", "job", "tokio"]
+
+keywords = ["cron", "crontab", "scheduler", "job", "tokio", "async"]
 
 categories = ["date-and-time"]
 
