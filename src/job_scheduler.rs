@@ -2,9 +2,11 @@ use crate::job::{JobLocked, JobType};
 use chrono::Utc;
 use tokio::sync::RwLock;
 use std::sync::Arc;
+use std::borrow::BorrowMut;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 use futures::future::join_all;
+use tokio::sync::RwLockWriteGuard;
 
 /// The JobScheduler contains and executes the scheduled jobs.
 pub struct JobsSchedulerLocked(Arc<RwLock<JobScheduler>>);
@@ -71,6 +73,28 @@ impl JobsSchedulerLocked {
         Ok(())
     }
 
+    //non-public function that should never be called unless the write lock has already been
+    //locked
+    async fn remove_internal(&mut self, to_be_removed:&Uuid, ws: &mut RwLockWriteGuard<'_, JobScheduler>) -> Result<(), Box<dyn std::error::Error + '_>> {
+        let mut removed: Vec<JobLocked> = vec![];
+        let mut retained: Vec<JobLocked> = vec![];
+        for job in ws.jobs.iter_mut()
+        {
+            enumerate_removal(to_be_removed, job, &mut removed, &mut retained).await;
+        }
+
+        for job in removed {
+            let mut job_r = job.0.write().await;
+            job_r.set_stopped();
+            let job_type = job_r.job_type();
+            if matches!(job_type, JobType::OneShot) || matches!(job_type, JobType::Repeated) {
+                job_r.abort_join_handle();
+            }
+        }
+        ws.jobs = retained;
+        Ok(())
+    }
+
     /// Remove a job from the `JobScheduler`
     ///
     /// ```rust,ignore
@@ -84,22 +108,7 @@ impl JobsSchedulerLocked {
     pub async fn remove(&mut self, to_be_removed: &Uuid) -> Result<(), Box<dyn std::error::Error + '_>> {
         {
             let mut ws = self.0.write().await;
-            let mut removed: Vec<JobLocked> = vec![];
-            let mut retained: Vec<JobLocked> = vec![];
-            for job in ws.jobs.iter_mut()
-            {
-                enumerate_removal(to_be_removed, job, &mut removed, &mut retained).await;
-            }
-
-            for job in removed {
-                let mut job_r = job.0.write().await;
-                job_r.set_stopped();
-                let job_type = job_r.job_type();
-                if matches!(job_type, JobType::OneShot) || matches!(job_type, JobType::Repeated) {
-                    job_r.abort_join_handle();
-                }
-            }
-            ws.jobs = retained;
+            self.remove_internal(to_be_removed, &mut ws).await?;
         }
         Ok(())
     }
@@ -116,7 +125,7 @@ impl JobsSchedulerLocked {
     ///     std::thread::sleep(Duration::from_millis(500));
     /// }
     /// ```
-pub async fn tick(&mut self) -> Result<(), Box<dyn std::error::Error + '_>> {
+    pub async fn tick(&mut self) -> Result<(), Box<dyn std::error::Error + '_>> {
         let l = self.clone();
         {
             let mut ws = self.0.write().await;
@@ -124,20 +133,16 @@ pub async fn tick(&mut self) -> Result<(), Box<dyn std::error::Error + '_>> {
                 if jl.tick().await {
                     let ref_for_later = jl.0.clone();
                     let jobs = l.clone();
-                    tokio::spawn(async move {
-                        let mut w = ref_for_later.write().await;
-                        let jt = w.job_type();
-                        if matches!(jt, JobType::OneShot) {
-                            let mut jobs = jobs.clone();
-                            let job_id = w.job_id();
-                            tokio::spawn(async move {
-                                if let Err(e) = jobs.remove(&job_id).await {
-                                    eprintln!("Error removing job {:}", e);
-                                }
-                            });
+                    let mut w = ref_for_later.write().await;
+                    let jt = w.job_type();
+                    if matches!(jt, JobType::OneShot) {
+                        let mut jobs = jobs.clone();
+                        let job_id = w.job_id();
+                        if let Err(e) = jobs.remove_internal(&job_id, &mut ws).await {
+                            eprintln!("Error removing job {:}", e);
                         }
-                        w.run(jobs);
-                    });
+                    }
+                    w.run(jobs);
                 }
             }
         }

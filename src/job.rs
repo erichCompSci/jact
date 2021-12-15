@@ -107,7 +107,9 @@ impl Job for CronJob {
 
     fn run(&mut self, jobs: JobScheduler) {
         let future = (self.run_async)(self.job_id, jobs);
+        eprintln!("Spawning the task");
         tokio::task::spawn(async move {
+            eprintln!("Running the future");
             future.await;
         });
     }
@@ -188,7 +190,10 @@ impl Job for NonCronJob {
 
     fn run(&mut self, jobs: JobScheduler) {
         let future = (self.run_async)(self.job_id, jobs);
+        eprintln!("Second");
+        eprintln!("Spawning the task");
         tokio::task::spawn(async move {
+            eprintln!("Running the future");
             future.await;
         });
     }
@@ -602,6 +607,7 @@ pub async fn tick(&mut self) -> bool {
                     must_run
                 },
                 JobType::OneShot => {
+                    eprintln!("s: {:#?}", s.last_tick());
                     if s.last_tick().is_some() {
                         s.set_last_tick(None);
                         s.set_ran(true);
@@ -620,8 +626,6 @@ pub async fn tick(&mut self) -> bool {
                     }
                 }
             }
-            //})
-            //.unwrap_or(false)
         }
     }
 
