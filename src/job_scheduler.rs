@@ -2,11 +2,10 @@ use crate::job::{JobLocked, JobType};
 use chrono::Utc;
 use tokio::sync::RwLock;
 use std::sync::Arc;
-use std::borrow::BorrowMut;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 use futures::future::join_all;
-use tokio::sync::RwLockWriteGuard;
+use tokio::sync::OwnedRwLockWriteGuard;
 
 /// The JobScheduler contains and executes the scheduled jobs.
 pub struct JobsSchedulerLocked(Arc<RwLock<JobScheduler>>);
@@ -21,8 +20,6 @@ impl Clone for JobsSchedulerLocked {
 pub struct JobScheduler {
     jobs: Vec<JobLocked>,
 }
-
-unsafe impl Send for JobScheduler {}
 
 impl Default for JobsSchedulerLocked {
     fn default() -> Self {
@@ -75,7 +72,7 @@ impl JobsSchedulerLocked {
 
     //non-public function that should never be called unless the write lock has already been
     //locked
-    async fn remove_internal(&mut self, to_be_removed:&Uuid, ws: &mut RwLockWriteGuard<'_, JobScheduler>) -> Result<(), Box<dyn std::error::Error + '_>> {
+    async fn remove_internal(&mut self, to_be_removed:&Uuid, ws: &mut OwnedRwLockWriteGuard<JobScheduler>) -> Result<(), Box<dyn std::error::Error + '_>> {
         let mut removed: Vec<JobLocked> = vec![];
         let mut retained: Vec<JobLocked> = vec![];
         for job in ws.jobs.iter_mut()
@@ -107,7 +104,8 @@ impl JobsSchedulerLocked {
     /// ```
     pub async fn remove(&mut self, to_be_removed: &Uuid) -> Result<(), Box<dyn std::error::Error + '_>> {
         {
-            let mut ws = self.0.write().await;
+            let copy = self.0.clone();
+            let mut ws = copy.write_owned().await;
             self.remove_internal(to_be_removed, &mut ws).await?;
         }
         Ok(())
@@ -126,24 +124,24 @@ impl JobsSchedulerLocked {
     /// }
     /// ```
     pub async fn tick(&mut self) -> Result<(), Box<dyn std::error::Error + '_>> {
-        let l = self.clone();
-        {
-            let mut ws = self.0.write().await;
-            for jl in ws.jobs.iter_mut() {
-                if jl.tick().await {
-                    let ref_for_later = jl.0.clone();
-                    let jobs = l.clone();
-                    let mut w = ref_for_later.write().await;
-                    let jt = w.job_type();
-                    if matches!(jt, JobType::OneShot) {
-                        let mut jobs = jobs.clone();
-                        let job_id = w.job_id();
-                        if let Err(e) = jobs.remove_internal(&job_id, &mut ws).await {
-                            eprintln!("Error removing job {:}", e);
-                        }
-                    }
-                    w.run(jobs);
+        let copy = self.0.clone();
+        let mut ws = copy.write_owned().await;
+        let mut job_ids : Vec<Uuid> = vec!();
+        for jl in ws.jobs.iter_mut() {
+            if jl.tick().await {
+                let mut w = jl.0.write().await;
+                let jt = w.job_type();
+                let job_id : Uuid = w.job_id();
+
+                if matches!(jt, JobType::OneShot) {
+                    job_ids.push(job_id);
                 }
+                w.run(self.clone());
+            }
+        }
+        for jobs in job_ids.iter() {
+            if let Err(e) = self.remove_internal(jobs, &mut ws).await {
+                eprintln!("Error removing job {:}", e);
             }
         }
 

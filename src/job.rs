@@ -5,22 +5,12 @@ use std::str::FromStr;
 use tokio::sync::RwLock;
 use std::sync::Arc;
 use uuid::Uuid;
-use crate::JobScheduler;
 use std::time::Duration;
 use tokio::task::JoinHandle;
 use std::pin::Pin;
 use std::future::Future;
 
-//pub type JobToRun = dyn FnMut(Uuid, JobsSchedulerLocked) + Send + Sync;
 pub type JobToRunAsync = dyn FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = ()> + Send + Sync>> + Send + Sync;
-
-//fn nop(_uuid: Uuid, _jobs: JobsSchedulerLocked) {
-//    // Do nothing
-//}
-
-//fn nop_async(_uuid: Uuid, _jobs: JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = ()> + Send + Sync>> {
-//    Box::pin(async move {})
-//}
 
 ///
 /// A schedulable Job
@@ -48,7 +38,7 @@ pub trait Job {
     fn count(&self) -> u32;
     fn increment_count(&mut self);
     fn job_id(&self) -> Uuid;
-    fn run(&mut self, jobs: JobScheduler);
+    fn run(&mut self, jobs: JobsSchedulerLocked);
     fn job_type(&self) -> &JobType;
     fn ran(&self) -> bool;
     fn set_ran(&mut self, ran: bool);
@@ -105,7 +95,7 @@ impl Job for CronJob {
         self.job_id
     }
 
-    fn run(&mut self, jobs: JobScheduler) {
+    fn run(&mut self, jobs: JobsSchedulerLocked) {
         let future = (self.run_async)(self.job_id, jobs);
         eprintln!("Spawning the task");
         tokio::task::spawn(async move {
@@ -188,7 +178,7 @@ impl Job for NonCronJob {
         self.job_id
     }
 
-    fn run(&mut self, jobs: JobScheduler) {
+    fn run(&mut self, jobs: JobsSchedulerLocked) {
         let future = (self.run_async)(self.job_id, jobs);
         eprintln!("Second");
         eprintln!("Spawning the task");
@@ -234,38 +224,6 @@ impl Job for NonCronJob {
 }
 
 impl JobLocked {
-
-//    /// Create a new cron job.
-//    ///
-//    /// ```rust,ignore
-//    /// let mut sched = JobScheduler::new();
-//    /// // Run at second 0 of the 15th minute of the 6th, 8th, and 10th hour
-//    /// // of any day in March and June that is a Friday of the year 2017.
-//    /// let job = Job::new("0 15 6,8,10 * Mar,Jun Fri 2017", |_uuid, _lock| {
-//    ///             println!("{:?} Hi I ran", chrono::Utc::now());
-//    ///         });
-//    /// sched.add(job)
-//    /// tokio::spawn(sched.start());
-//    /// ```
-    //pub fn new<T>(schedule: &str, run: T) -> Result<Self, Box<dyn std::error::Error>>
-    //where
-    //    T: 'static,
-    //    T: FnMut(Uuid, JobsSchedulerLocked) + Send + Sync,
-    //{
-    //    let schedule: Schedule = Schedule::from_str(schedule)?;
-    //    Ok(Self {
-    //        0: Arc::new(RwLock::new(Box::new(CronJob {
-    //            schedule,
-    //            run: Box::new(run),
-    //            run_async: Box::new(nop_async),
-    //            last_tick: None,
-    //            job_id: Uuid::new_v4(),
-    //            count: 0,
-    //            ran: false,
-    //            stopped: false,
-    //        }))),
-    //    })
-    //}
 
     /// Create a new async cron job.
     ///
@@ -318,25 +276,6 @@ impl JobLocked {
         JobLocked::new(schedule, run)
     }
 
-//    /// Create a new async cron job.
-//    ///
-//    /// ```rust,ignore
-//    /// let mut sched = JobScheduler::new();
-//    /// // Run at second 0 of the 15th minute of the 6th, 8th, and 10th hour
-//    /// // of any day in March and June that is a Friday of the year 2017.
-//    /// let job = Job::new("0 15 6,8,10 * Mar,Jun Fri 2017", |_uuid, _lock| Box::pin( async move {
-//    ///             println!("{:?} Hi I ran", chrono::Utc::now());
-//    ///         }));
-//    /// sched.add(job)
-//    /// tokio::spawn(sched.start());
-//    /// ```
-//    pub fn new_cron_job_async<T>(schedule: &str, run: T) -> Result<Self, Box<dyn std::error::Error>>
-//    where
-//        T: 'static,
-//        T: FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = ()> + Send + Sync>> + Send + Sync,
-//    {
-//        JobLocked::new_async(schedule, run)
-//    }
 
     async fn make_one_shot_job(duration: Duration, run_async: Box<JobToRunAsync>) -> Result<Self, Box<dyn std::error::Error>> {
         let job = NonCronJob {
@@ -377,24 +316,6 @@ impl JobLocked {
         })
     }
 
-//    /// Create a new one shot job.
-//    ///
-//    /// This is checked if it is running only after 500ms in 500ms intervals.
-//    /// ```rust,ignore
-//    /// let mut sched = JobScheduler::new();
-//    /// let job = Job::new_one_shot(Duration::from_secs(18), |_uuid, _l| {
-//    ///            println!("{:?} I'm only run once", chrono::Utc::now());
-//    ///        }
-//    /// sched.add(job)
-//    /// tokio::spawn(sched.start());
-//    /// ```
-//    pub fn new_one_shot<T>(duration: Duration, run: T) -> Result<Self, Box<dyn std::error::Error>>
-//    where
-//        T: 'static,
-//        T: FnMut(Uuid, JobsSchedulerLocked) + Send + Sync,
-//    {
-//        JobLocked::make_one_shot_job(duration, Box::new(run), Box::new(nop_async), false)
-//    }
 
     /// Create a new async one shot job.
     ///
@@ -454,24 +375,6 @@ async fn make_new_one_shot_at_an_instant(instant: std::time::Instant, run_async:
         })
     }
 
-//    /// Create a new one shot job that runs at an instant
-//    ///
-//    /// ```rust,ignore
-//    /// // Run after 20 seconds
-//    /// let mut sched = JobScheduler::new();
-//    /// let instant = std::time::Instant::now().checked_add(std::time::Duration::from_secs(20));
-//    /// let job = Job::new_one_shot_at_instant(instant, |_uuid, _lock| println!("I run once after 20 seconds") );
-//    /// sched.add(job)
-//    /// tokio::spawn(sched.start());
-//    /// ```
-//    pub fn new_one_shot_at_instant<T>(instant: std::time::Instant, run: T) -> Result<Self, Box<dyn std::error::Error>>
-//    where
-//        T: 'static,
-//        T: FnMut(Uuid, JobsSchedulerLocked) + Send + Sync,
-//    {
-//        JobLocked::make_new_one_shot_at_an_instant(instant, Box::new(run), Box::new(nop_async), false)
-//    }
-
     /// Create a new async one shot job that runs at an instant
     ///
     /// ```rust,ignore
@@ -482,7 +385,7 @@ async fn make_new_one_shot_at_an_instant(instant: std::time::Instant, run_async:
     /// sched.add(job)
     /// tokio::spawn(sched.start());
     /// ```
-pub async fn new_one_shot_at_instant<T>(instant: std::time::Instant, run: T) -> Result<Self, Box<dyn std::error::Error>>
+    pub async fn new_one_shot_at_instant<T>(instant: std::time::Instant, run: T) -> Result<Self, Box<dyn std::error::Error>>
     where
         T: 'static,
         T: FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = ()> + Send + Sync>> + Send + Sync,
@@ -490,7 +393,7 @@ pub async fn new_one_shot_at_instant<T>(instant: std::time::Instant, run: T) -> 
         JobLocked::make_new_one_shot_at_an_instant(instant, Box::new(run)).await
     }
 
-async fn make_new_repeated(duration: Duration, run_async: Box<JobToRunAsync>) -> Result<Self, Box<dyn std::error::Error>> {
+    async fn make_new_repeated(duration: Duration, run_async: Box<JobToRunAsync>) -> Result<Self, Box<dyn std::error::Error>> {
         let job = NonCronJob {
             run_async,
             last_tick: None,
@@ -532,25 +435,6 @@ async fn make_new_repeated(duration: Duration, run_async: Box<JobToRunAsync>) ->
         })
     }
 
-//    /// Create a new repeated job.
-//    ///
-//    /// This is checked if it is running only after 500ms in 500ms intervals.
-//    /// ```rust,ignore
-//    /// let mut sched = JobScheduler::new();
-//    /// let job = Job::new_repeated(Duration::from_secs(8), |_uuid, _lock| {
-//    ///     println!("{:?} I'm repeated every 8 seconds", chrono::Utc::now());
-//    /// }
-//    /// sched.add(job)
-//    /// tokio::spawn(sched.start());
-//    /// ```
-//    pub fn new_repeated<T>(duration: Duration, run: T) -> Result<Self, Box<dyn std::error::Error>>
-//        where
-//            T: 'static,
-//            T: FnMut(Uuid, JobsSchedulerLocked) + Send + Sync,
-//    {
-//        JobLocked::make_new_repeated(duration, Box::new(run), Box::new(nop_async), false)
-//    }
-
     /// Create a new async repeated job.
     ///
     /// This is checked if it is running only after 500ms in 500ms intervals.
@@ -573,7 +457,7 @@ pub async fn new_repeated<T>(duration: Duration, run: T) -> Result<Self, Box<dyn
     ///
     /// The `tick` method returns a true if there was an invocation needed after it was last called
     /// This method will also change the last tick on itself
-pub async fn tick(&mut self) -> bool {
+    pub async fn tick(&mut self) -> bool {
         let now = Utc::now();
         {
             let mut s = self.0.write().await;

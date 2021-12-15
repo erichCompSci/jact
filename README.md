@@ -30,9 +30,27 @@ execute once per hour but only on day 5 through 10 of the month.
 Day of the week can be specified as an abbreviation or the full name. A
 schedule of `0 0 6 * * Sun,Sat` would execute at 6am on Sunday and Saturday.
 
-A simple usage example:
+#New User Note
+This library was forked and updated from another one.  It was forked to try and improve
+the code and make it more predictable.  The previous code was afflicted with synchronous
+RwLocks that had the potential to cause threads to grind to a halt.  In addition, some 
+design choices force complicated (and in some places erroneous) code.  One of those design
+choices was to try and expose the underlying RwLock to the user, while also trying to lock
+the RwLock "under the cover" so to speak.  This can lead to code that can trip over itself
+and deadlock in unfortunate ways.
 
-## The following is not Working
+These issues have been tackled in this iteration of the code.  However, we have not started
+to force the user to lock the RwLock themselves, though for Sync and Send, we do expose the
+Arc Lock to the user.  All of this is to say, you can freely call the scheduler member 
+functions without locking anything at all.  However, if you use the scheduler in your
+asynchronous job for any reason, you need to lock it with the appropriate lock.
+
+I'm pretty sure the type system will force you to do that anyway, but I haven't played with
+it yet so I'm not sure.
+
+## The following is not the current state of things
+
+A simple usage example:
 
 ```rust
 use Jact::{JobScheduler, JobToRun, Job};
