@@ -7,18 +7,20 @@ use uuid::Uuid;
 use futures::future::join_all;
 use tokio::sync::OwnedRwLockWriteGuard;
 
-/// The JobScheduler contains and executes the scheduled jobs.
-pub struct JobsSchedulerLocked(Arc<RwLock<JobScheduler>>);
+// The JobScheduler contains and executes the scheduled jobs.
+//pub struct JobsSchedulerLocked(Arc<RwLock<JobScheduler>>);
+pub type JobsSchedulerLocked = Arc<RwLock<JobScheduler>>;
 
-impl Clone for JobsSchedulerLocked {
-    fn clone(&self) -> Self {
-        JobsSchedulerLocked(self.0.clone())
-    }
-}
+
+//impl Clone for JobsSchedulerLocked {
+//    fn clone(&self) -> Self {
+//        JobsSchedulerLocked(self.0.clone())
+//    }
+//}
 
 #[derive(Default)]
 pub struct JobScheduler {
-    jobs: Vec<JobLocked>,
+    jobs_to_run: Vec<JobLocked>,
 }
 
 impl Default for JobsSchedulerLocked {
