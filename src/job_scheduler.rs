@@ -1,11 +1,12 @@
 use crate::job::{JobLocked, JobType};
-use chrono::Utc;
 use tokio::sync::RwLock;
 use std::sync::Arc;
-use tokio::task::JoinHandle;
 use uuid::Uuid;
-use futures::future::join_all;
-use tokio::sync::OwnedRwLockWriteGuard;
+use std::fmt;
+use std::error::Error;
+use std::collections::HashMap;
+use async_trait::async_trait;
+use std::ops::DerefMut;
 
 // The JobScheduler contains and executes the scheduled jobs.
 //pub struct JobsSchedulerLocked(Arc<RwLock<JobScheduler>>);
@@ -20,39 +21,66 @@ pub type JobsSchedulerLocked = Arc<RwLock<JobScheduler>>;
 
 #[derive(Default)]
 pub struct JobScheduler {
-    jobs_to_run: Vec<JobLocked>,
+    jobs_to_run: HashMap<Uuid, JobLocked>,
 }
 
-impl Default for JobsSchedulerLocked {
-    fn default() -> Self {
-        Self::new()
+#[derive(Debug)]
+pub enum JobSchedulerError{
+    InvalidArgument(String),
+}
+
+impl fmt::Display for JobSchedulerError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &*self {
+            JobSchedulerError::InvalidArgument(err_message) => write!(f, " Invalid Argument error -- {}", err_message),
+        }
     }
 }
 
-async fn enumerate_removal(to_be_removed: &Uuid, 
-                           job: &mut JobLocked, 
-                           remove: &mut Vec<JobLocked>,
-                           retained: &mut Vec<JobLocked>)
+impl Error for JobSchedulerError{
+    fn source(&self) -> Option<&(dyn Error + 'static)> 
+    { 
+        match *self {
+            _ => None
+        }
+    }
+}
+
+
+async fn enumerate_removal(job: &mut JobLocked, 
+                           retained: &mut HashMap<Uuid, JobLocked>)
 {
-    let f_lock = job.0.read().await;
-    if f_lock.job_id().eq(to_be_removed)
+    let read_lock = job.read().await;
+    match *read_lock
     {
-        remove.push(job.clone());
-    }
-    else
-    {
-        retained.push(job.clone());
+        JobType::CronJob(ref handle) 
+      | JobType::Repeated(ref handle)
+      | JobType::OneShot(ref handle) => {
+          if handle.stopped
+          {
+              retained.insert(handle.job_id, job.clone());
+          }
+      }
     }
 }
 
-impl JobsSchedulerLocked {
+#[async_trait]
+pub trait LockedSchedInterface {
+    fn create() -> JobsSchedulerLocked;
+    async fn add(&mut self, job: JobLocked) -> Result<(), Box<dyn std::error::Error + '_>>;
+    async fn remove(&mut self, to_be_removed: &Uuid) -> Result<(), Box<dyn std::error::Error + '_>>;
+    async fn clean(&mut self) -> Result<(), Box<dyn std::error::Error + '_>>;
+}
+
+#[async_trait]
+impl LockedSchedInterface for JobsSchedulerLocked {
 
     /// Create a new `JobSchedulerLocked`.
-    pub fn new() -> JobsSchedulerLocked {
+    fn create() -> JobsSchedulerLocked {
         let r = JobScheduler {
-            ..Default::default()
+            jobs_to_run : HashMap::new(),
         };
-        JobsSchedulerLocked(Arc::new(RwLock::new(r)))
+        Arc::new(RwLock::new(r))
     }
 
     /// Add a job to the `JobScheduler`
@@ -64,33 +92,21 @@ impl JobsSchedulerLocked {
     ///     println!("I get executed every 10 seconds!");
     /// }));
     /// ```
-    pub async fn add(&mut self, job: JobLocked) -> Result<(), Box<dyn std::error::Error + '_>> {
+    async fn add(&mut self, job: JobLocked) -> Result<(), Box<dyn std::error::Error + '_>> {
         {
-            let mut self_w = self.0.write().await;
-            self_w.jobs.push(job);
-        }
-        Ok(())
-    }
-
-    //non-public function that should never be called unless the write lock has already been
-    //locked
-    async fn remove_internal(&mut self, to_be_removed:&Uuid, ws: &mut OwnedRwLockWriteGuard<JobScheduler>) -> Result<(), Box<dyn std::error::Error + '_>> {
-        let mut removed: Vec<JobLocked> = vec![];
-        let mut retained: Vec<JobLocked> = vec![];
-        for job in ws.jobs.iter_mut()
-        {
-            enumerate_removal(to_be_removed, job, &mut removed, &mut retained).await;
-        }
-
-        for job in removed {
-            let mut job_r = job.0.write().await;
-            job_r.set_stopped();
-            let job_type = job_r.job_type();
-            if matches!(job_type, JobType::OneShot) || matches!(job_type, JobType::Repeated) {
-                job_r.abort_join_handle();
+            let mut self_w = self.write().await;
+            let uuid;
+            {
+                let job_read = job.read().await;
+                match *job_read
+                {
+                    JobType::CronJob(ref handle)
+                  | JobType::Repeated(ref handle)
+                  | JobType::OneShot(ref handle) => { uuid = handle.job_id; }
+                }
             }
+            self_w.deref_mut().jobs_to_run.insert(uuid, job);
         }
-        ws.jobs = retained;
         Ok(())
     }
 
@@ -104,113 +120,31 @@ impl JobsSchedulerLocked {
     /// }));
     /// sched.remove(job_id);
     /// ```
-    pub async fn remove(&mut self, to_be_removed: &Uuid) -> Result<(), Box<dyn std::error::Error + '_>> {
+    async fn remove(&mut self, to_be_removed: &Uuid) -> Result<(), Box<dyn std::error::Error + '_>> {
         {
-            let copy = self.0.clone();
-            let mut ws = copy.write_owned().await;
-            self.remove_internal(to_be_removed, &mut ws).await?;
+            let copy = self.clone();
+            let mut ws = copy.write().await;
+            let job = ws.jobs_to_run.get_mut(to_be_removed).ok_or(JobSchedulerError::InvalidArgument("Tried to remove value not in scheduler".to_string()))?;
+            let mut write_guard = job.write().await;
+            match *write_guard
+            {
+                JobType::CronJob(ref mut handle)
+              | JobType::Repeated(ref mut handle)
+              | JobType::OneShot(ref mut handle) => { handle.stopped = true; },
+            };
         }
         Ok(())
     }
 
-    /// The `tick` method increments time for the JobScheduler and executes
-    /// any pending jobs. It is recommended to sleep for at least 500
-    /// milliseconds between invocations of this method.
-    /// This is kept public if you're running this yourself. It is better to
-    /// call the `start` method if you want all of this automated for you.
-    ///
-    /// ```rust,ignore
-    /// loop {
-    ///     sched.tick();
-    ///     std::thread::sleep(Duration::from_millis(500));
-    /// }
-    /// ```
-    pub async fn tick(&mut self) -> Result<(), Box<dyn std::error::Error + '_>> {
-        let copy = self.0.clone();
-        let mut ws = copy.write_owned().await;
-        let mut job_ids : Vec<Uuid> = vec!();
-        for jl in ws.jobs.iter_mut() {
-            if jl.tick().await {
-                let mut w = jl.0.write().await;
-                let jt = w.job_type();
-                let job_id : Uuid = w.job_id();
-
-                if matches!(jt, JobType::OneShot) {
-                    job_ids.push(job_id);
-                }
-                w.run(self.clone());
-            }
-        }
-        for jobs in job_ids.iter() {
-            if let Err(e) = self.remove_internal(jobs, &mut ws).await {
-                eprintln!("Error removing job {:}", e);
-            }
+    async fn clean(&mut self) -> Result<(), Box<dyn std::error::Error + '_>> {
+        let mut ws = self.write().await;
+        let mut retained = HashMap::new();
+        for (_, job) in ws.jobs_to_run.iter_mut()
+        {
+            enumerate_removal(job, &mut retained).await;
         }
 
+        ws.jobs_to_run = retained;
         Ok(())
-    }
-
-
-    /// The `start` spawns a Tokio task where it loops. Every 500ms it
-    /// runs the tick method to increment any
-    /// any pending jobs.
-    ///
-    /// ```rust,ignore
-    /// if let Err(e) = sched.start().await {
-    ///         eprintln!("Error on scheduler {:?}", e);
-    ///     }
-    /// ```
-    pub fn start(&self) -> JoinHandle<()> {
-        let jl: JobsSchedulerLocked = self.clone();
-        let jh: JoinHandle<()> = tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(core::time::Duration::from_millis(500)).await;
-                let mut jsl = jl.clone();
-                let tick = jsl.tick().await;
-                if let Err(e) = tick {
-                    eprintln!("Error on job scheduler tick {:?}", e);
-                    break;
-                }
-            }
-        });
-        jh
-    }
-
-    /// The `time_till_next_job` method returns the duration till the next job
-    /// is supposed to run. This can be used to sleep until then without waking
-    /// up at a fixed interval.AsMut
-    ///
-    /// ```rust, ignore
-    /// loop {
-    ///     sched.tick();
-    ///     std::thread::sleep(sched.time_till_next_job());
-    /// }
-    /// ```
-    pub async fn time_till_next_job(
-        &self,
-    ) -> Result<std::time::Duration, Box<dyn std::error::Error + '_>> {
-        let r = self.0.read().await;
-        if r.jobs.is_empty() {
-            // Take a guess if there are no jobs.
-            return Ok(std::time::Duration::from_millis(500));
-        }
-        let now = Utc::now();
-        let min = r
-            .jobs
-            .iter()
-            .map(|j| async {
-                let j_unlocked = j.0.read().await;
-                j_unlocked.schedule()
-                          .and_then(|s| s.upcoming(Utc).take(1).last().map(|next| next - now))
-            });
-        let min = join_all(min).await;
-        let min = min.into_iter().flatten().min();
-        
-                
-        let m = min
-            .unwrap_or_else(chrono::Duration::zero)
-            .to_std()
-            .unwrap_or_else(|_| std::time::Duration::new(0, 0));
-        Ok(m)
     }
 }
