@@ -157,20 +157,18 @@ impl Job for JobLocked
                 let the_job_id;
                 //Pick the read lock up and check that we still have work to do
                 {
-                    let mut write_lock = job_copy.write().await;
-                    match *write_lock
+                    let read_lock = job_copy.read().await;
+                    match *read_lock
                     {
-                        JobType::CronJob(ref mut handle)
-                      | JobType::OneShot(ref mut handle)
-                      | JobType::Repeated(ref mut handle) => { 
+                        JobType::CronJob(ref handle)
+                      | JobType::OneShot(ref handle)
+                      | JobType::Repeated(ref handle) => { 
                             if handle.stopped 
                             { 
                                 return Err(JobError::StoppedError("Job was stopped manually!".to_string())); 
                             }
                             async_func = handle.run_async.clone();
                             the_job_id = handle.job_id.clone();
-                            //let future = (handle.run_async)(handle.job_id, jobs.clone());
-                            //future.await;
                       },
                     };
                 }
@@ -185,16 +183,10 @@ impl Job for JobLocked
                 //Pick up the write lock and set up the next round
                 {
                     let mut write_lock = job_copy.write().await;
-                    match *write_lock 
+                    if let JobType::OneShot(ref mut handle) = *write_lock
                     {
-                        JobType::CronJob(_) => {
-
-                        },
-                        JobType::Repeated(_) => {}, //Do nothing, the job will repeat naturally
-                        JobType::OneShot(ref mut handle) => { 
-                            handle.stopped = true;
-                            return Ok(()); 
-                        },
+                        handle.stopped = true;
+                        return Ok(());
                     }
                 }
             }
