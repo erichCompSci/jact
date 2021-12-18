@@ -1,7 +1,7 @@
 [package]
 name = "jact"
-version = "0.1.1"
-authors = ["Erich Lohrmann <erichlohrmann@gmail.com>", "Michael van Niekerk <mike@agri-io.co.za>"]
+version = "0.2.0"
+authors = ["Erich Lohrmann <erichlohrmann@gmail.com>"]
 edition = "2021"
 
 repository = "https://github.com/erichCompSci/jact"
