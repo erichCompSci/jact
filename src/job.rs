@@ -60,7 +60,7 @@ pub trait LockedJobCreation {
         Self: Sized;
 
     #[doc(hidden)]
-    fn make_one_shot_job(duration: Duration, run_async: Box<JobToRunAsync>) -> Result<Self, Box<dyn std::error::Error>>
+    fn make_one_shot_job(duration: Duration, run_async: Arc<RwLock<JobToRunAsync>>) -> Result<Self, Box<dyn std::error::Error>>
     where 
         Self: Sized;
 
@@ -72,7 +72,7 @@ pub trait LockedJobCreation {
             Self: Sized;
 
     #[doc(hidden)]
-    fn make_new_one_shot_at_an_instant(instant: std::time::Instant, run_async: Box<JobToRunAsync>) -> Result<Self, Box<dyn std::error::Error>>
+    fn make_new_one_shot_at_an_instant(instant: std::time::Instant, run_async: Arc<RwLock<JobToRunAsync>>) -> Result<Self, Box<dyn std::error::Error>>
     where 
         Self: Sized;
 
@@ -83,7 +83,7 @@ pub trait LockedJobCreation {
         Self: Sized;
 
     #[doc(hidden)]
-    fn make_new_repeated(duration: Duration, run_async: Box<JobToRunAsync>) -> Result<Self, Box<dyn std::error::Error>>
+    fn make_new_repeated(duration: Duration, run_async: Arc<RwLock<JobToRunAsync>>) -> Result<Self, Box<dyn std::error::Error>>
     where
         Self: Sized;
 
@@ -106,7 +106,7 @@ pub trait Job {
 
 pub struct JobHandle {
     pub schedule:       Option<Schedule>,
-    pub run_async:      Box<JobToRunAsync>,
+    pub run_async:      Arc<RwLock<JobToRunAsync>>,
     pub time_til_next:  Option<Duration>,
     pub job_id:         Uuid,
     pub stopped:        bool,
@@ -153,6 +153,8 @@ impl Job for JobLocked
                 }
                 sleep(the_duration).await;
 
+                let async_func;
+                let the_job_id;
                 //Pick the read lock up and check that we still have work to do
                 {
                     let mut write_lock = job_copy.write().await;
@@ -165,11 +167,20 @@ impl Job for JobLocked
                             { 
                                 return Err(JobError::StoppedError("Job was stopped manually!".to_string())); 
                             }
-                            let future = (handle.run_async)(handle.job_id, jobs.clone());
-                            future.await;
+                            async_func = handle.run_async.clone();
+                            the_job_id = handle.job_id.clone();
+                            //let future = (handle.run_async)(handle.job_id, jobs.clone());
+                            //future.await;
                       },
                     };
                 }
+                //Pick up the run_async lock
+                {
+                    let mut write_lock = async_func.write().await;
+                    let future = (*write_lock)(the_job_id, jobs.clone());
+                    future.await;
+                }
+
 
                 //Pick up the write lock and set up the next round
                 {
@@ -227,7 +238,7 @@ impl LockedJobCreation for JobLocked {
         let schedule: Schedule = Schedule::from_str(schedule)?;
         Ok(Arc::new(RwLock::new(JobType::CronJob(JobHandle {
                                                 schedule: Some(schedule),
-                                                run_async: Box::new(run),
+                                                run_async: Arc::new(RwLock::new(run)),
                                                 time_til_next: None,
                                                 job_id: Uuid::new_v4(),
                                                 stopped: false }))))
@@ -257,7 +268,7 @@ impl LockedJobCreation for JobLocked {
     }
 
 
-    fn make_one_shot_job(duration: Duration, run_async: Box<JobToRunAsync>) -> Result<Self, Box<dyn std::error::Error>>
+    fn make_one_shot_job(duration: Duration, run_async: Arc<RwLock<JobToRunAsync>>) -> Result<Self, Box<dyn std::error::Error>>
     where 
         Self: Sized,
     {
@@ -287,10 +298,10 @@ impl LockedJobCreation for JobLocked {
             T: FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = ()> + Send + Sync>> + Send + Sync,
             Self: Sized,
     {
-        JobLocked::make_one_shot_job(duration, Box::new(run))
+        JobLocked::make_one_shot_job(duration, Arc::new(RwLock::new(run)))
     }
 
-    fn make_new_one_shot_at_an_instant(instant: std::time::Instant, run_async: Box<JobToRunAsync>) -> Result<Self, Box<dyn std::error::Error>>
+    fn make_new_one_shot_at_an_instant(instant: std::time::Instant, run_async: Arc<RwLock<JobToRunAsync>>) -> Result<Self, Box<dyn std::error::Error>>
     where 
         Self: Sized,
     {
@@ -324,10 +335,10 @@ impl LockedJobCreation for JobLocked {
         T: FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = ()> + Send + Sync>> + Send + Sync,
         Self: Sized,
     {
-        JobLocked::make_new_one_shot_at_an_instant(instant, Box::new(run))
+        JobLocked::make_new_one_shot_at_an_instant(instant, Arc::new(RwLock::new(run)))
     }
 
-    fn make_new_repeated(duration: Duration, run_async: Box<JobToRunAsync>) -> Result<Self, Box<dyn std::error::Error>> 
+    fn make_new_repeated(duration: Duration, run_async: Arc<RwLock<JobToRunAsync>>) -> Result<Self, Box<dyn std::error::Error>> 
     where 
         Self: Sized,
     {
@@ -360,7 +371,7 @@ impl LockedJobCreation for JobLocked {
             T: FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = ()> + Send + Sync>> + Send + Sync,
             Self: Sized,
     {
-        JobLocked::make_new_repeated(duration, Box::new(run))
+        JobLocked::make_new_repeated(duration, Arc::new(RwLock::new(run)))
     }
 
 }
