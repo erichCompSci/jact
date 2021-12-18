@@ -1,4 +1,4 @@
-use crate::job::{JobLocked, JobType};
+use crate::job::{JobLocked, JobType, Job};
 use tokio::sync::RwLock;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -105,7 +105,12 @@ impl LockedSchedInterface for JobsSchedulerLocked {
                   | JobType::OneShot(ref handle) => { uuid = handle.job_id; }
                 }
             }
-            self_w.deref_mut().jobs_to_run.insert(uuid, job);
+            self_w.deref_mut().jobs_to_run.insert(uuid, job.clone());
+            //Run it
+            {
+                let mut job = job.clone();
+                job.run(self.clone()).await;
+            }
         }
         Ok(())
     }

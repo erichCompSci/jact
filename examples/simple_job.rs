@@ -1,40 +1,23 @@
-use jact::{Job, JobScheduler};
+use jact::{JobLocked, Job, JobScheduler, JobSchedulerInterface, JobInterface};
 use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
-    let mut sched = JobScheduler::new();
+    let mut sched = JobScheduler::create();
 
-    //let five_s_job = Job::new("1/5 * * * * *", |_uuid, _l| {
-    //    println!("{:?} I run every 5 seconds", chrono::Utc::now());
-    //})
-    //    .unwrap();
-    //let five_s_job_guid = five_s_job.guid();
-    //sched.add(five_s_job);
-
-    let four_s_job_async = Job::new("1/4 * * * * *", |_uuid, _l| Box::pin(async move {
+    println!("Creating new cron job!");
+    let four_s_job_async = JobLocked::new_cron_job("1/4 * * * * *", |_uuid, _l| Box::pin(async move {
         println!("{:?} I run async every 4 seconds", chrono::Utc::now());
     }))?;
-    let four_s_job_guid = four_s_job_async.guid().await;
+    let four_s_job_guid = four_s_job_async.job_id().await;
     sched.add(four_s_job_async).await.unwrap();
+    println!("Added new job!");
 
-    //sched.add(
-    //    Job::new("1/30 * * * * *", |_uuid, _l| {
-    //        println!("{:?} I run every 30 seconds", chrono::Utc::now());
-    //    })
-    //    .unwrap(),
-    //);
-
-    //sched.add(
-    //    Job::new_one_shot(Duration::from_secs(18), |_uuid, _l| {
-    //        println!("{:?} I'm only run once", chrono::Utc::now());
-    //    }).unwrap()
-    //);
-
+    println!("Creating and adding new one shot job!");
     sched.add(
-        Job::new_one_shot(Duration::from_secs(16), |_uuid, _l| Box::pin( async move {
+        JobLocked::new_one_shot(Duration::from_secs(16), |_uuid, _l| Box::pin( async move {
             println!("{:?} I'm only run once async", chrono::Utc::now());
-        })).await?).await.unwrap();
+        }))?).await.unwrap();
 
     //let jj = Job::new_repeated(Duration::from_secs(8), |_uuid, _l| {
     //    println!("{:?} I'm repeated every 8 seconds", chrono::Utc::now());
@@ -42,13 +25,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     //let jj_guid = jj.guid();
     //sched.add(jj);
 
-    let jja = Job::new_repeated(Duration::from_secs(7), |_uuid, _l| Box::pin(async move {
+    println!("Creating new repeated job!");
+    let jja = JobLocked::new_repeated(Duration::from_secs(7), |_uuid, _l| Box::pin(async move {
         println!("{:?} I'm repeated async every 7 seconds", chrono::Utc::now());
-    })).await?;
-    let jja_guid = jja.guid().await;
+    }))?;
+    let jja_guid = jja.job_id().await;
     sched.add(jja).await.unwrap();
+    println!("Added new repeated job!");
 
-    tokio::spawn(sched.start());
+    println!("Waiting!");
+    //tokio::spawn(sched.start());
     tokio::time::sleep(Duration::from_secs(30)).await;
 
     println!("{:?} Remove 4, 5, 7 and 8 sec jobs", chrono::Utc::now());
