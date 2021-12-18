@@ -1,12 +1,9 @@
-use tokio_test::block_on;
 use tokio::time::sleep;
 use tokio::time::Duration as TDuration;
 use std::time::Duration as SDuration;
 use jact;
 use jact::JobSchedulerInterface;
 use jact::JobInterface;
-use jact::JobLocked;
-use jact::Job;
 
 
 #[tokio::test]

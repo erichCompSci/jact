@@ -1,5 +1,6 @@
 use crate::job_scheduler::JobsSchedulerLocked;
 use cron::Schedule;
+use chrono::Utc;
 use std::str::FromStr;
 use tokio::sync::RwLock;
 use tokio::time::{Duration,sleep};
@@ -23,6 +24,7 @@ pub type JobLocked = Arc<RwLock<JobType>>;
 pub enum JobError{
     StoppedError(String),
     CreationError(String),
+    InvalidArgument(String),
 }
 
 impl fmt::Display for JobError {
@@ -30,6 +32,7 @@ impl fmt::Display for JobError {
         match &*self {
             JobError::StoppedError(err_message) => write!(f, " Job stopped error -- {}", err_message),
             JobError::CreationError(err_message) => write!(f, " Job creation error -- {}", err_message),
+            JobError::InvalidArgument(err_message) => write!(f, " Invalide argument error -- {}", err_message),
         }
     }
 }
@@ -139,18 +142,35 @@ impl Job for JobLocked
             loop {
                 //So I can drop the read lock during the sleep
                 let the_duration : Duration;
+                //let uuid : Uuid;
                 {
                     let read_lock = job_copy.read().await;
                     match *read_lock
                     {
-                        JobType::CronJob(ref _handle) => { the_duration = Duration::from_secs(0) },
+                        JobType::CronJob(ref handle) => 
+                        { 
+                            let next_date_time = handle.schedule.as_ref().ok_or(JobError::InvalidArgument("Schedule is None".to_string()))?;
+                            let next_date_time = next_date_time.upcoming(Utc).next();
+                            if let Some(date_time) = next_date_time 
+                            {
+                                the_duration = (date_time - Utc::now()).to_std().map_err(|err| { JobError::InvalidArgument(format!("{:#?}", err.source())) })?;
+                            }
+                            else
+                            {
+                                the_duration = Duration::from_secs(0) 
+                            }
+                            //uuid = handle.job_id;
+                        },
                         JobType::OneShot(ref handle)
                       | JobType::Repeated(ref handle) => 
                       { 
                           the_duration = handle.time_til_next.unwrap_or(Duration::from_secs(0)); 
+                          //uuid = handle.job_id;
                       }
                     }
                 }
+
+                //println!("Uuid: {} sleeping for {}", uuid, the_duration.as_secs());
                 sleep(the_duration).await;
 
                 let async_func;
@@ -174,6 +194,7 @@ impl Job for JobLocked
                 }
                 //Pick up the run_async lock
                 {
+                    //println!("Uuid: {} about to grab write lock and wait", uuid);
                     let mut write_lock = async_func.write().await;
                     let future = (*write_lock)(the_job_id, jobs.clone());
                     future.await;
