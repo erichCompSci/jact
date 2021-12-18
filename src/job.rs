@@ -46,7 +46,8 @@ impl Error for JobError{
     }
 }
 
-pub trait LockedJobCreation {
+#[async_trait]
+pub trait LockedJobInterface {
 
     #[doc(hidden)]
     fn make_new_cron_job<T>(schedule: &str, run: T) -> Result<Self, Box<dyn std::error::Error>>
@@ -96,6 +97,7 @@ pub trait LockedJobCreation {
             T: FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = ()> + Send + Sync>> + Send + Sync,
             Self: Sized;
 
+    async fn get_job_id(&self) -> Uuid;
 
 }
 
@@ -228,7 +230,8 @@ impl Job for JobLocked
 }
 
 
-impl LockedJobCreation for JobLocked {
+#[async_trait]
+impl LockedJobInterface for JobLocked {
 
     /// Create a new async cron job.
     ///
@@ -385,6 +388,11 @@ impl LockedJobCreation for JobLocked {
             Self: Sized,
     {
         JobLocked::make_new_repeated(duration, Arc::new(RwLock::new(run)))
+    }
+
+    async fn get_job_id(&self) -> Uuid
+    {
+        self.job_id().await
     }
 
 }
