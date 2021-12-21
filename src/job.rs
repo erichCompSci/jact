@@ -14,7 +14,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 
 
-pub type JobToRunAsync = dyn FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = Result<(), JobError>> + Send + Sync>> + Send + Sync;
+pub type JobToRunAsync = dyn FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = Result<(), JobError>> + Send>> + Send;
 
 ///
 /// A schedulable Job
@@ -55,14 +55,14 @@ pub trait LockedJobInterface {
     fn make_new_cron_job<T>(schedule: &str, run: T) -> Result<Self, JobError>
     where
         T: 'static,
-        T: FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = Result<(), JobError>> + Send + Sync>> + Send + Sync,
+        T: FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = Result<(), JobError>> + Send>> + Send,
         Self: Sized;
 
 
     fn new_cron_job<T>(schedule: &str, run: T) -> Result<Self, JobError>
     where
         T: 'static,
-        T:  FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = Result<(), JobError>> + Send + Sync>> + Send + Sync,
+        T:  FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = Result<(), JobError>> + Send>> + Send,
         Self: Sized;
 
     #[doc(hidden)]
@@ -74,7 +74,7 @@ pub trait LockedJobInterface {
     fn new_one_shot<T>(duration: Duration, run: T) -> Result<Self, JobError>
         where
             T: 'static,
-            T:  FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = Result<(), JobError>> + Send + Sync>> + Send + Sync,
+            T:  FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = Result<(), JobError>> + Send>> + Send,
             Self: Sized;
 
     #[doc(hidden)]
@@ -85,7 +85,7 @@ pub trait LockedJobInterface {
     fn new_one_shot_at_instant<T>(instant: std::time::Instant, run: T) -> Result<Self, JobError>
     where
         T: 'static,
-        T:  FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = Result<(), JobError>> + Send + Sync>> + Send + Sync,
+        T:  FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = Result<(), JobError>> + Send>> + Send,
         Self: Sized;
 
     #[doc(hidden)]
@@ -96,7 +96,7 @@ pub trait LockedJobInterface {
     fn new_repeated<T>(duration: Duration, run: T) -> Result<Self, JobError>
         where
             T: 'static,
-            T:  FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = Result<(), JobError>> + Send + Sync>> + Send + Sync,
+            T:  FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = Result<(), JobError>> + Send>> + Send,
             Self: Sized;
 
     async fn get_job_id(&self) -> Uuid;
@@ -250,7 +250,7 @@ impl LockedJobInterface for JobLocked {
     fn make_new_cron_job<T>(schedule: &str, run: T) -> Result<Self, JobError>
     where
         T: 'static,
-        T:  FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = Result<(), JobError>> + Send + Sync>> + Send + Sync,
+        T:  FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = Result<(), JobError>> + Send>> + Send,
         Self: Sized,
     {
         let schedule: Schedule = Schedule::from_str(schedule).map_err(|err| {JobError::InvalidArgument(err.to_string()) })?;
@@ -279,7 +279,7 @@ impl LockedJobInterface for JobLocked {
     fn new_cron_job<T>(schedule: &str, run: T) -> Result<Self, JobError>
     where
         T: 'static,
-        T:  FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = Result<(), JobError>> + Send + Sync>> + Send + Sync,
+        T:  FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = Result<(), JobError>> + Send>> + Send,
         Self: Sized,
     {
         JobLocked::make_new_cron_job(schedule, run)
@@ -313,7 +313,7 @@ impl LockedJobInterface for JobLocked {
     fn new_one_shot<T>(duration: Duration, run: T) -> Result<Self, JobError>
         where
             T: 'static,
-            T:  FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = Result<(), JobError>> + Send + Sync>> + Send + Sync,
+            T:  FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = Result<(), JobError>> + Send>> + Send,
             Self: Sized,
     {
         JobLocked::make_one_shot_job(duration, Arc::new(RwLock::new(run)))
@@ -350,7 +350,7 @@ impl LockedJobInterface for JobLocked {
     fn new_one_shot_at_instant<T>(instant: std::time::Instant, run: T) -> Result<Self, JobError>
     where
         T: 'static,
-        T:  FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = Result<(), JobError>> + Send + Sync>> + Send + Sync,
+        T:  FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = Result<(), JobError>> + Send>> + Send,
         Self: Sized,
     {
         JobLocked::make_new_one_shot_at_an_instant(instant, Arc::new(RwLock::new(run)))
@@ -386,7 +386,7 @@ impl LockedJobInterface for JobLocked {
     fn new_repeated<T>(duration: Duration, run: T) -> Result<Self, JobError>
         where
             T: 'static,
-            T:  FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = Result<(), JobError>> + Send + Sync>> + Send + Sync,
+            T:  FnMut(Uuid, JobsSchedulerLocked) -> Pin<Box<dyn Future<Output = Result<(), JobError>> + Send>> + Send,
             Self: Sized,
     {
         JobLocked::make_new_repeated(duration, Arc::new(RwLock::new(run)))
