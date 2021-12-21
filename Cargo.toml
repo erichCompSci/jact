@@ -1,6 +1,6 @@
 [package]
 name = "jact"
-version = "0.3.0"
+version = "0.4.0"
 authors = ["Erich Lohrmann <erichlohrmann@gmail.com>"]
 edition = "2021"
 
