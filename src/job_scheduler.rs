@@ -1,4 +1,4 @@
-use crate::job::{JobLocked, JobType, Job};
+use crate::job::{JobLocked, JobType, Job, JobError};
 use tokio::sync::RwLock;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -67,9 +67,9 @@ async fn enumerate_removal(job: &mut JobLocked,
 #[async_trait]
 pub trait LockedSchedInterface {
     fn create() -> JobsSchedulerLocked;
-    async fn add(&mut self, job: JobLocked) -> Result<(), Box<dyn std::error::Error + '_>>;
-    async fn remove(&mut self, to_be_removed: &Uuid) -> Result<(), Box<dyn std::error::Error + '_>>;
-    async fn clean(&mut self) -> Result<(), Box<dyn std::error::Error + '_>>;
+    async fn add(&mut self, job: JobLocked) -> Result<(), JobError>;
+    async fn remove(&mut self, to_be_removed: &Uuid) -> Result<(), JobError>;
+    async fn clean(&mut self) -> Result<(), JobError>;
 }
 
 #[async_trait]
@@ -92,7 +92,7 @@ impl LockedSchedInterface for JobsSchedulerLocked {
     ///     println!("I get executed every 10 seconds!");
     /// }));
     /// ```
-    async fn add(&mut self, job: JobLocked) -> Result<(), Box<dyn std::error::Error + '_>> {
+    async fn add(&mut self, job: JobLocked) -> Result<(), JobError> {
         {
             let mut self_w = self.write().await;
             let uuid;
@@ -125,11 +125,14 @@ impl LockedSchedInterface for JobsSchedulerLocked {
     /// }));
     /// sched.remove(job_id);
     /// ```
-    async fn remove(&mut self, to_be_removed: &Uuid) -> Result<(), Box<dyn std::error::Error + '_>> {
+    async fn remove(&mut self, to_be_removed: &Uuid) -> Result<(), JobError> {
         {
             let copy = self.clone();
             let mut ws = copy.write().await;
-            let job = ws.jobs_to_run.get_mut(to_be_removed).ok_or(JobSchedulerError::InvalidArgument("Tried to remove value not in scheduler".to_string()))?;
+            let job = ws.jobs_to_run
+                        .get_mut(to_be_removed)
+                        .ok_or(JobSchedulerError::InvalidArgument("Tried to remove value not in scheduler".to_string()))
+                        .map_err(|err| { JobError::WrappedError(err.to_string()) })?;
             let mut write_guard = job.write().await;
             match *write_guard
             {
@@ -141,7 +144,7 @@ impl LockedSchedInterface for JobsSchedulerLocked {
         Ok(())
     }
 
-    async fn clean(&mut self) -> Result<(), Box<dyn std::error::Error + '_>> {
+    async fn clean(&mut self) -> Result<(), JobError> {
         let mut ws = self.write().await;
         let mut retained = HashMap::new();
         for (_, job) in ws.jobs_to_run.iter_mut()

@@ -1,12 +1,21 @@
 use jact::{Job, JobScheduler, JobSchedulerInterface, JobInterface};
 use std::time::Duration;
 
+async fn testing_theory(mut thing: JobScheduler) -> Result<(), Box<dyn std::error::Error + 'static>>
+{
+    thing.add(Job::new_one_shot(Duration::from_secs(20), |_uuid, _l| Box::pin(async move { println!("Extra"); Ok(()) }))?).await.unwrap();
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     let mut sched = JobScheduler::create();
 
-    let four_s_job_async = Job::new_cron_job("1/4 * * * * *", |_uuid, _l| Box::pin(async move {
-        println!("{:?} I am a cron job run async every 4 seconds", chrono::Utc::now()); Ok(())
+    let four_s_job_async = Job::new_cron_job("1/4 * * * * *", |_uuid, l| Box::pin(async move {
+        println!("{:?} I am a cron job run async every 4 seconds", chrono::Utc::now()); 
+        let job_catch = l.clone();
+        testing_theory(job_catch).await;
+        Ok(())
     }))?;
     let four_s_job_guid = four_s_job_async.get_job_id().await;
     sched.add(four_s_job_async).await.unwrap();
