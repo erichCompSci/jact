@@ -119,6 +119,19 @@ pub struct JobHandle {
     pub stopped:        bool,
 }
 
+//Manual implementation to avoid the annoying aync function it's holding
+impl fmt::Debug for JobHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("JobHandle")
+         .field("schedule", &self.schedule)
+         .field("time_til_next", &self.time_til_next)
+         .field("job_id", &self.job_id)
+         .field("stopped", &self.stopped)
+         .finish()
+    }
+}
+
+#[derive(Debug)]
 pub enum JobType {
     CronJob(JobHandle),
     OneShot(JobHandle),

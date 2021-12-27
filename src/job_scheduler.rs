@@ -19,7 +19,7 @@ pub type JobsSchedulerLocked = Arc<RwLock<JobScheduler>>;
 //    }
 //}
 
-#[derive(Default)]
+#[derive(Default,Debug)]
 pub struct JobScheduler {
     jobs_to_run: HashMap<Uuid, JobLocked>,
 }
