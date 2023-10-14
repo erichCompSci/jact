@@ -18,9 +18,9 @@ categories = ["date-and-time"]
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-cron = "0.8"
-chrono = "0.4"
-uuid = { version = "0.8", features = ["v4"] }
+cron = "^0.12"
+chrono = "^0.4"
+uuid = { version = "^0.8", features = ["v4"] }
 futures = "^0.3.17"
 scopeguard = "^1.1.0"
 async-trait = "^0.1.52"
